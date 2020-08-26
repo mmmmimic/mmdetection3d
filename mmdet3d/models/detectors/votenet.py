@@ -38,22 +38,22 @@ class VoteNet(SingleStage3DDetector):
         Args:
             points (list[torch.Tensor]): Points of each batch.
             img_metas (list): Image metas.
-            gt_bboxes_3d (:obj:`BaseInstance3DBoxes`): gt bboxes of each batch.
+            gt_bboxes_3d (:obj:`BaseInstance3DBoxes`): gt bboxes of each batch. ground truth
             gt_labels_3d (list[torch.Tensor]): gt class labels of each batch.
             pts_semantic_mask (None | list[torch.Tensor]): point-wise semantic
-                label of each batch.
+                label of each batch.语义标签
             pts_instance_mask (None | list[torch.Tensor]): point-wise instance
-                label of each batch.
+                label of each batch.实例标签
             gt_bboxes_ignore (None | list[torch.Tensor]): Specify
                 which bounding.
 
         Returns:
             dict: Losses.
         """
-        points_cat = torch.stack(points)
+        points_cat = torch.stack(points)#默认dim=0，将points按维度连接起来，尺寸变为[B,N,C0]
 
-        x = self.extract_feat(points_cat)
-        bbox_preds = self.bbox_head(x, self.train_cfg.sample_mod)
+        x = self.extract_feat(points_cat)#这个基类是关键
+        bbox_preds = self.bbox_head(x, self.train_cfg.sample_mod)#预测的bounding box
         loss_inputs = (points, gt_bboxes_3d, gt_labels_3d, pts_semantic_mask,
                        pts_instance_mask, img_metas)
         losses = self.bbox_head.loss(

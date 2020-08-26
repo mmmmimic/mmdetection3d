@@ -38,7 +38,7 @@ class PointFPModule(nn.Module):
                 target_feats: torch.Tensor,
                 source_feats: torch.Tensor) -> torch.Tensor:
         """forward.
-
+        把特征从张量source传播（插值）到张量target
         Args:
             target (Tensor): (B, n, 3) tensor of the xyz positions of
                 the target features.
@@ -53,23 +53,23 @@ class PointFPModule(nn.Module):
             Tensor: (B, M, N) M = mlp[-1], tensor of the target features.
         """
         if source is not None:
-            dist, idx = three_nn(target, source)
-            dist_reciprocal = 1.0 / (dist + 1e-8)
+            dist, idx = three_nn(target, source) #找到离target中离source最近的3个下采样点和对应的距离
+            dist_reciprocal = 1.0 / (dist + 1e-8)#按距离反向计算权重
             norm = torch.sum(dist_reciprocal, dim=2, keepdim=True)
-            weight = dist_reciprocal / norm
+            weight = dist_reciprocal / norm#把权重归一化
 
-            interpolated_feats = three_interpolate(source_feats, idx, weight)
+            interpolated_feats = three_interpolate(source_feats, idx, weight)#插值，传播得到点的特征
         else:
             interpolated_feats = source_feats.expand(*source_feats.size()[0:2],
                                                      target.size(1))
 
         if target_feats is not None:
             new_features = torch.cat([interpolated_feats, target_feats],
-                                     dim=1)  # (B, C2 + C1, n)
+                                     dim=1)  # (B, C2 + C1, N) 原有的特征加上插值而来的特征，在第二维串联
         else:
             new_features = interpolated_feats
 
         new_features = new_features.unsqueeze(-1)
-        new_features = self.mlps(new_features)
+        new_features = self.mlps(new_features) #最后还要经过pointNet处理
 
         return new_features.squeeze(-1)

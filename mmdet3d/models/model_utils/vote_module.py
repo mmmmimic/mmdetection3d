@@ -11,10 +11,10 @@ class VoteModule(nn.Module):
     Generate votes from seed point features.
 
     Args:
-        in_channels (int): Number of channels of seed point features.
-        vote_per_seed (int): Number of votes generated from each seed point.
+        in_channels (int): Number of channels of seed point features. 在voteNet中，seeds由pointNet++得到
+        vote_per_seed (int): Number of votes generated from each seed point.默认是1，也可以是多个
         gt_per_seed (int): Number of ground truth votes generated
-            from each seed point.
+            from each seed point.，每个vote为seed得到的gt数
         conv_channels (tuple[int]): Out channels of vote
             generating convolution.
         conv_cfg (dict): Config of convolution.
@@ -44,6 +44,7 @@ class VoteModule(nn.Module):
 
         prev_channels = in_channels
         vote_conv_list = list()
+        # 使用多个一维，尺度为1的卷积，因为输入的尺寸是(B,C,N)
         for k in range(len(conv_channels)):
             vote_conv_list.append(
                 ConvModule(
@@ -59,6 +60,7 @@ class VoteModule(nn.Module):
         self.vote_conv = nn.Sequential(*vote_conv_list)
 
         # conv_out predicts coordinate and residual features
+        # 输出包括坐标所以加3
         out_channel = (3 + in_channels) * self.vote_per_seed
         self.conv_out = nn.Conv1d(prev_channels, out_channel, 1)
 
@@ -80,27 +82,28 @@ class VoteModule(nn.Module):
                     shape (B, C, M) where ``M=num_seed*vote_per_seed``, \
                     ``C=vote_feature_dim``.
         """
-        batch_size, feat_channels, num_seed = seed_feats.shape
-        num_vote = num_seed * self.vote_per_seed
+        batch_size, feat_channels, num_seed = seed_feats.shape# 由pointNet++提取出的seeds，尺寸(B,C,N)
+        num_vote = num_seed * self.vote_per_seed#vote的数目
         x = self.vote_conv(seed_feats)
         # (batch_size, (3+out_dim)*vote_per_seed, num_seed)
-        votes = self.conv_out(x)
+        votes = self.conv_out(x)#用MLP输出offset，尺寸(B, (3+C2), N)
 
         votes = votes.transpose(2, 1).view(batch_size, num_seed,
-                                           self.vote_per_seed, -1)
-        offset = votes[:, :, :, 0:3]
-        res_feats = votes[:, :, :, 3:]
+                                           self.vote_per_seed, -1)# transpose之后尺寸变为(B,N,(3+C2))，
+        # view之后变为(B,N,1,(3+C2))
+        offset = votes[:, :, :, 0:3]# offset只考虑坐标
+        res_feats = votes[:, :, :, 3:]# 剩下的是特征
 
-        vote_points = (seed_points.unsqueeze(2) + offset).contiguous()
-        vote_points = vote_points.view(batch_size, num_vote, 3)
+        vote_points = (seed_points.unsqueeze(2) + offset).contiguous()# seeds+offset生成votes
+        vote_points = vote_points.view(batch_size, num_vote, 3)# 尺寸变回为(B,N,3)
         vote_feats = (seed_feats.transpose(2, 1).unsqueeze(2) +
-                      res_feats).contiguous()
+                      res_feats).contiguous()# transpose之后变为(B,N,C)，unsqueeze之后变为(B,N,1,C)
         vote_feats = vote_feats.view(batch_size, num_vote,
                                      feat_channels).transpose(2,
-                                                              1).contiguous()
+                                                              1).contiguous()#尺寸变为(B,C,N)
 
         if self.norm_feats:
-            features_norm = torch.norm(vote_feats, p=2, dim=1)
+            features_norm = torch.norm(vote_feats, p=2, dim=1)# 计算channel-wise的范数，这里是2阶
             vote_feats = vote_feats.div(features_norm.unsqueeze(1))
         return vote_points, vote_feats
 

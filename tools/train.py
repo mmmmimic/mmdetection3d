@@ -20,15 +20,15 @@ from mmdet.apis import set_random_seed, train_detector
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
-    parser.add_argument('config', help='train config file path')
-    parser.add_argument('--work-dir', help='the dir to save logs and models')
+    parser.add_argument('config', help='train config file path') #这是必须的，配置文件，*.py
+    parser.add_argument('--work-dir', help='the dir to save logs and models')#用于保存模型和日志的checkpoints文件夹
     parser.add_argument(
-        '--resume-from', help='the checkpoint file to resume from')
+        '--resume-from', help='the checkpoint file to resume from')#从之前的模型开始训练
     parser.add_argument(
         '--no-validate',
         action='store_true',
-        help='whether not to evaluate the checkpoint during training')
-    group_gpus = parser.add_mutually_exclusive_group()
+        help='whether not to evaluate the checkpoint during training')#是否使用验证集
+    group_gpus = parser.add_mutually_exclusive_group()#接下来两个必须一起给
     group_gpus.add_argument(
         '--gpus',
         type=int,
@@ -80,6 +80,7 @@ def main():
         # update configs according to CLI args if args.work_dir is not None
         cfg.work_dir = args.work_dir
     elif cfg.get('work_dir', None) is None:
+        # 自动设置work directory
         # use config filename as default work_dir if cfg.work_dir is None
         cfg.work_dir = osp.join('./work_dirs',
                                 osp.splitext(osp.basename(args.config))[0])
@@ -136,7 +137,7 @@ def main():
     meta['seed'] = args.seed
 
     model = build_detector(
-        cfg.model, train_cfg=cfg.train_cfg, test_cfg=cfg.test_cfg)
+        cfg.model, train_cfg=cfg.train_cfg, test_cfg=cfg.test_cfg)#这里是关键
     logger.info(f'Model:\n{model}')
     datasets = [build_dataset(cfg.data.train)]
     if len(cfg.workflow) == 2:

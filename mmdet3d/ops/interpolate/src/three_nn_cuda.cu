@@ -13,7 +13,7 @@ __global__ void three_nn_kernel(int b, int n, int m,
                                 const float *__restrict__ known,
                                 float *__restrict__ dist2,
                                 int *__restrict__ idx) {
-  // unknown: (B, N, 3)
+  // unknown: (B, N, 3) B是batch size，N是点的数目，3是xyz
   // known: (B, M, 3)
   // output:
   //      dist2: (B, N, 3)
@@ -35,6 +35,7 @@ __global__ void three_nn_kernel(int b, int n, int m,
   double best1 = 1e40, best2 = 1e40, best3 = 1e40;
   int besti1 = 0, besti2 = 0, besti3 = 0;
   for (int k = 0; k < m; ++k) {
+    // 比较下采样点中的每个点
     float x = known[k * 3 + 0];
     float y = known[k * 3 + 1];
     float z = known[k * 3 + 2];

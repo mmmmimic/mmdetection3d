@@ -30,7 +30,7 @@ class SingleStage3DDetector(Base3DDetector):
                  test_cfg=None,
                  pretrained=None):
         super(SingleStage3DDetector, self).__init__()
-        self.backbone = build_backbone(backbone)
+        self.backbone = build_backbone(backbone)#backbone是关键
         if neck is not None:
             self.neck = build_neck(neck)
         bbox_head.update(train_cfg=train_cfg)

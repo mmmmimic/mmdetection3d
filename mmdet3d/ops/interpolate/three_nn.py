@@ -18,18 +18,21 @@ class ThreeNN(Function):
                 find the nearest neighbors.
             source (Tensor): shape (B, M, 3), points set that is used
                 to find the nearest neighbors of points in target set.
+                M是下采样点的数量
+                B是batch大小？
+                3是采样点的3个坐标
 
         Returns:
             Tensor: shape (B, N, 3), L2 distance of each point in target
                 set to their corresponding nearest neighbors.
         """
-        assert target.is_contiguous()
+        assert target.is_contiguous()#应该是为了CUDA后续的处理，要保证相邻的元素在内存中也是相邻的
         assert source.is_contiguous()
 
         B, N, _ = target.size()
-        m = source.size(1)
-        dist2 = torch.cuda.FloatTensor(B, N, 3)
-        idx = torch.cuda.IntTensor(B, N, 3)
+        m = source.size(1) #下采样点的数量
+        dist2 = torch.cuda.FloatTensor(B, N, 3) #每个点都对应3个最近的距离
+        idx = torch.cuda.IntTensor(B, N, 3) #每个点对应三个下采样点的索引
 
         interpolate_ext.three_nn_wrapper(B, N, m, target, source, dist2, idx)
         return torch.sqrt(dist2), idx

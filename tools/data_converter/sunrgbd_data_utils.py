@@ -7,12 +7,12 @@ from scipy import io as sio
 
 def random_sampling(points, num_points, replace=None, return_choices=False):
     """Random sampling.
-
+    随机均匀下采样，将点云采样成一定数量的点
     Sampling point cloud to a certain number of points.
 
     Args:
-        points (ndarray): Point cloud.
-        num_points (int): The number of samples.
+        points (ndarray): Point cloud.采样的点云
+        num_points (int): The number of samples.要采样的点的数量，指定
         replace (bool): Whether the sample is with or without replacement.
         return_choices (bool): Whether to return choices.
 
@@ -22,9 +22,9 @@ def random_sampling(points, num_points, replace=None, return_choices=False):
 
     if replace is None:
         replace = (points.shape[0] < num_points)
-    choices = np.random.choice(points.shape[0], num_points, replace=replace)
+    choices = np.random.choice(points.shape[0], num_points, replace=replace) #允许重复采样
     if return_choices:
-        return points[choices], choices
+        return points[choices], choices # 返回采样得到的点和序号
     else:
         return points[choices]
 
@@ -32,26 +32,26 @@ def random_sampling(points, num_points, replace=None, return_choices=False):
 class SUNRGBDInstance(object):
 
     def __init__(self, line):
-        data = line.split(' ')
+        data = line.split(' ') # classname[1]+gtBb2D(2D bbox)[4]+centroid[3]+coeffs[3]+orientation[2]
         data[1:] = [float(x) for x in data[1:]]
         self.classname = data[0]
         self.xmin = data[1]
         self.ymin = data[2]
         self.xmax = data[1] + data[3]
         self.ymax = data[2] + data[4]
-        self.box2d = np.array([self.xmin, self.ymin, self.xmax, self.ymax])
-        self.centroid = np.array([data[5], data[6], data[7]])
-        self.w = data[8]
+        self.box2d = np.array([self.xmin, self.ymin, self.xmax, self.ymax])# 注意在原数据集中使用mincoor+width+length的形式的
+        self.centroid = np.array([data[5], data[6], data[7]]) 
+        self.w = data[8] # 原来三个coeff的绝对值分别是bbox3D的宽长高
         self.l = data[9]  # noqa: E741
         self.h = data[10]
-        self.orientation = np.zeros((3, ))
+        self.orientation = np.zeros((3, )) # 最后一个总是0，代表绕着x和y轴的方向总是0
         self.orientation[0] = data[11]
         self.orientation[1] = data[12]
         self.heading_angle = -1 * np.arctan2(self.orientation[1],
-                                             self.orientation[0])
+                                             self.orientation[0]) #由于这里的坐标系是反的，所以要乘以-1
         self.box3d = np.concatenate([
             self.centroid,
-            np.array([self.l * 2, self.w * 2, self.h * 2, self.heading_angle])
+            np.array([self.l * 2, self.w * 2, self.h * 2, self.heading_angle])# x,y,z,w,l,h,/theta
         ])
 
 
@@ -74,18 +74,18 @@ class SUNRGBDData(object):
             'bed', 'table', 'sofa', 'chair', 'toilet', 'desk', 'dresser',
             'night_stand', 'bookshelf', 'bathtub'
         ]
-        self.cat2label = {cat: self.classes.index(cat) for cat in self.classes}
-        self.label2cat = {
-            label: self.classes[label]
+        self.cat2label = {cat: self.classes.index(cat) for cat in self.classes} #字典的格式，如{'bed':0}这种
+        self.label2cat = { #字典的格式，如{0:'bed'}这种
+            label: self.classes[label] 
             for label in range(len(self.classes))
         }
-        assert split in ['train', 'val', 'test']
-        split_file = osp.join(self.split_dir, f'{split}_data_idx.txt')
+        assert split in ['train', 'val', 'test'] # split只能是这三个中的一个
+        split_file = osp.join(self.split_dir, f'{split}_data_idx.txt') #数据的索引
         mmcv.check_file_exist(split_file)
         self.sample_id_list = map(int, mmcv.list_from_file(split_file))
-        self.image_dir = osp.join(self.split_dir, 'image')
-        self.calib_dir = osp.join(self.split_dir, 'calib')
-        self.depth_dir = osp.join(self.split_dir, 'depth')
+        self.image_dir = osp.join(self.split_dir, 'image') #存着2D图片
+        self.calib_dir = osp.join(self.split_dir, 'calib') #相机和坐标转换的信息
+        self.depth_dir = osp.join(self.split_dir, 'depth') #深度信息，txt
         if use_v1:
             self.label_dir = osp.join(self.split_dir, 'label_v1')
         else:
@@ -100,7 +100,7 @@ class SUNRGBDData(object):
 
     def get_image_shape(self, idx):
         image = self.get_image(idx)
-        return np.array(image.shape[:2], dtype=np.int32)
+        return np.array(image.shape[:2], dtype=np.int32) # 图像的尺寸，不包含通道数
 
     def get_depth(self, idx):
         depth_filename = osp.join(self.depth_dir, f'{idx:06d}.mat')
@@ -111,14 +111,14 @@ class SUNRGBDData(object):
         calib_filepath = osp.join(self.calib_dir, f'{idx:06d}.txt')
         lines = [line.rstrip() for line in open(calib_filepath)]
         Rt = np.array([float(x) for x in lines[0].split(' ')])
-        Rt = np.reshape(Rt, (3, 3), order='F')
-        K = np.array([float(x) for x in lines[1].split(' ')])
+        Rt = np.reshape(Rt, (3, 3), order='F') # 3x3的旋转矩阵
+        K = np.array([float(x) for x in lines[1].split(' ')]) # 相机内参矩阵
         return K, Rt
 
     def get_label_objects(self, idx):
         label_filename = osp.join(self.label_dir, f'{idx:06d}.txt')
         lines = [line.rstrip() for line in open(label_filename)]
-        objects = [SUNRGBDInstance(line) for line in lines]
+        objects = [SUNRGBDInstance(line) for line in lines] #处理label
         return objects
 
     def get_infos(self, num_workers=4, has_label=True, sample_id_list=None):
@@ -127,7 +127,7 @@ class SUNRGBDData(object):
         This method gets information from the raw data.
 
         Args:
-            num_workers (int): Number of threads to be used. Default: 4.
+            num_workers (int): Number of threads to be used. Default: 4. # 默认4线程
             has_label (bool): Whether the data has label. Default: True.
             sample_id_list (list[int]): Index list of the sample.
                 Default: None.
