@@ -4,8 +4,7 @@ from torch.autograd import Function
 from typing import Tuple
 
 from ..ball_query import ball_query
-from . import group_points_ext
-
+from . import group_points_ext, calc_weight_ext
 
 class QueryAndGroup(nn.Module):
     """Query and Group.
@@ -35,7 +34,8 @@ class QueryAndGroup(nn.Module):
                  return_grouped_xyz=False,
                  normalize_xyz=False,
                  uniform_sample=False,
-                 return_unique_cnt=False):
+                 return_unique_cnt=False,
+                 edge_arg=False):
         super(QueryAndGroup, self).__init__()
         self.radius = radius
         self.sample_num = sample_num
@@ -44,6 +44,7 @@ class QueryAndGroup(nn.Module):
         self.normalize_xyz = normalize_xyz
         self.uniform_sample = uniform_sample
         self.return_unique_cnt = return_unique_cnt
+        self.edge_arg = edge_arg
         if self.return_unique_cnt:
             assert self.uniform_sample
 
@@ -94,6 +95,27 @@ class QueryAndGroup(nn.Module):
                     ), 'Cannot have not features and not use xyz as a feature!'
             new_features = grouped_xyz
 
+        # 2020/8/28 update: add edge enhancement
+        # initilize the center based on grouped_xyz:(B,3,point_num,sample_num)
+        if self.edge_arg:
+                grouped_xyz_copy = grouped_xyz.clone()
+                center_xyz_copy = center_xyz.clone()
+                grouped_xyz_copy = (((grouped_xyz_copy.transpose(1,3)).transpose(1,2)).cuda()).contiguous()
+                center_xyz_copy = ((center_xyz_copy).cuda()).contiguous()
+                batch_size, point_num, sample_num, _ = grouped_xyz_copy.size()
+                edge_weight = ((torch.ones(batch_size,point_num,sample_num)).cuda()).contiguous()
+
+                calc_weight_ext.calc_weight(batch_size, point_num, sample_num,grouped_xyz_copy,center_xyz_copy,edge_weight)
+                # normalization
+                for i in range(batch_size):
+                    temp = (edge_weight[i,:,:]).view(point_num, sample_num)
+                    edge_weight[i,:,:] = nn.functional.normalize(temp,p=2,dim=0)
+                #(B,npoints,nsample)->(B,C,npoints,nsample)
+                edge_weights = torch.cat(new_features.size(1)*[edge_weight.unsqueeze(1)], dim=1)
+                edge_weights.requires_grad = True
+                edge_weights = edge_weights.contiguous()
+                new_features = new_features.mul(edge_weights).contiguous()
+        
         ret = [new_features]
         if self.return_grouped_xyz:
             ret.append(grouped_xyz)

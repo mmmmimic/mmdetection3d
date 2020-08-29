@@ -78,7 +78,8 @@ class VoteHead(nn.Module):
         self.num_dir_bins = self.bbox_coder.num_dir_bins
 
         self.vote_module = VoteModule(**vote_moudule_cfg)
-        self.vote_aggregation = PointSAModule(**vote_aggregation_cfg)
+        vote_aggregation_cfg['edge_arg']=True
+        self.vote_aggregation = PointSAModule(**vote_aggregation_cfg)#直接用的SA层
 
         prev_channel = vote_aggregation_cfg['mlp_channels'][-1]
         conv_pred_list = list()
@@ -114,9 +115,9 @@ class VoteHead(nn.Module):
         Note:
             The forward of VoteHead is devided into 4 steps:
 
-                1. Generate vote_points from seed_points.
-                2. Aggregate vote_points.
-                3. Predict bbox and score.
+                1. Generate vote_points from seed_points.使用MLP从seeds中（seeds由pointNet++得到）获得vote points
+                2. Aggregate vote_points.对votes进行samplings+grouping，提取local feature
+                3. Predict bbox and score.把上一步得到的features输入到MLP中，具体做法为MLP2(max(MLP1(features)))
                 4. Decode predictions.
 
         Args:
@@ -127,7 +128,7 @@ class VoteHead(nn.Module):
         Returns:
             dict: Predictions of vote head.
         """
-        assert sample_mod in ['vote', 'seed', 'random']
+        assert sample_mod in ['vote', 'seed', 'random']#有三种sampling的方式
 
         seed_points = feat_dict['fp_xyz'][-1]
         seed_features = feat_dict['fp_features'][-1]
@@ -143,14 +144,14 @@ class VoteHead(nn.Module):
             vote_features=vote_features)
 
         # 2. aggregate vote_points
-        if sample_mod == 'vote':
+        if sample_mod == 'vote':#对vote直接进行FPS（在SA module中），保留所有seeds
             # use fps in vote_aggregation
             sample_indices = None
-        elif sample_mod == 'seed':
+        elif sample_mod == 'seed':#对seeds先进行一次FPS
             # FPS on seed and choose the votes corresponding to the seeds
             sample_indices = furthest_point_sample(seed_points,
                                                    self.num_proposal)
-        elif sample_mod == 'random':
+        elif sample_mod == 'random':#对seeds先进行一次随机采样
             # Random sampling from the votes
             batch_size, num_seed = seed_points.shape[:2]
             sample_indices = seed_points.new_tensor(

@@ -1,68 +1,59 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-# 
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-
-''' Voting module: generate votes from XYZ and features of seed points.
-Date: July, 2019
-Author: Charles R. Qi and Or Litany
-'''
-
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import cython
 
-class VotingModule(nn.Module):
-    def __init__(self, vote_factor, seed_feature_dim):
-        """ Votes generation from seed point features.
-        Args:
-            vote_factor: int
-                number of votes generated from each seed point
-            seed_feature_dim: int
-                number of channels of seed point features
-            vote_feature_dim: int
-                number of channels of vote features
-        """
-        super().__init__()
-        self.vote_factor = vote_factor
-        self.in_dim = seed_feature_dim
-        self.out_dim = self.in_dim # due to residual feature, in_dim has to be == out_dim
-        self.conv1 = torch.nn.Conv1d(self.in_dim, self.in_dim, 1)
-        self.conv2 = torch.nn.Conv1d(self.in_dim, self.in_dim, 1)
-        self.conv3 = torch.nn.Conv1d(self.in_dim, (3+self.out_dim) * self.vote_factor, 1)
-        self.bn1 = torch.nn.BatchNorm1d(self.in_dim)
-        self.bn2 = torch.nn.BatchNorm1d(self.in_dim)
-        
-    def forward(self, seed_xyz, seed_features):
-        """ Forward pass.
-        Arguments:
-            seed_xyz: (batch_size, num_seed, 3) Pytorch tensor
-            seed_features: (batch_size, feature_dim, num_seed) Pytorch tensor
-        Returns:
-            vote_xyz: (batch_size, num_seed*vote_factor, 3)
-            vote_features: (batch_size, vote_feature_dim, num_seed*vote_factor)
-        """
-        batch_size = seed_xyz.shape[0]
-        num_seed = seed_xyz.shape[1]
-        num_vote = num_seed*self.vote_factor
-        net = F.relu(self.bn1(self.conv1(seed_features))) 
-        net = F.relu(self.bn2(self.conv2(net))) 
-        net = self.conv3(net) # (batch_size, (3+out_dim)*vote_factor, num_seed)
-                
-        net = net.transpose(2,1).view(batch_size, num_seed, self.vote_factor, 3+self.out_dim)
-        offset = net[:,:,:,0:3]
-        vote_xyz = seed_xyz.unsqueeze(2) + offset
-        vote_xyz = vote_xyz.contiguous().view(batch_size, num_vote, 3)
-        
-        residual_features = net[:,:,:,3:] # (batch_size, num_seed, vote_factor, out_dim)
-        vote_features = seed_features.transpose(2,1).unsqueeze(2) + residual_features
-        vote_features = vote_features.contiguous().view(batch_size, num_vote, self.out_dim)
-        vote_features = vote_features.transpose(2,1).contiguous()
-        
-        return vote_xyz, vote_features
- 
-if __name__=='__main__':
-    net = VotingModule(2, 256).cuda()
-    xyz, features = net(torch.rand(8,1024,3).cuda(), torch.rand(8,256,1024).cuda())
-    print('xyz', xyz.shape)
-    print('features', features.shape)
+
+batch_size = 15
+point_num = 6
+sample_num = 10
+N = 100
+C = 5
+new_features = torch.cuda.FloatTensor(batch_size, C, point_num, sample_num)+1
+grouped_xyz = torch.rand(batch_size,3,point_num,sample_num)
+center_xyz = torch.rand(batch_size, point_num, 3)
+idx = torch.randint(0,1,(batch_size,point_num,sample_num))
+points_xyz = torch.rand(batch_size,N,3)
+edge_weight = torch.zeros(batch_size,point_num,sample_num)
+LAMBDA = 0.5 
+grouped_xyz_copy = grouped_xyz.clone()
+center_xyz_copy = center_xyz.clone()
+idx_copy = idx.clone()
+batch_size, _, point_num, sample_num = grouped_xyz_copy.size()
+edge_weight = torch.zeros(batch_size,point_num,sample_num)
+LAMBDA = 0.5
+
+for b in range(batch_size):
+    for p in range(point_num):
+        # for each batch and each region
+        center = center_xyz_copy[b,p,:].view(3,1).contiguous()
+        # remove duplicates
+        uniq_idx = torch.unique(idx_copy[b,p,:])
+        uniq_num = uniq_idx.size(0)
+        if uniq_num<=1:
+            edge_weight[b,p,:] = torch.ones(1,1,sample_num)
+            continue
+        # handle the first point
+        point_sel = grouped_xyz_copy[b,:,p,0].view(3,1).contiguous()
+        point_clst = grouped_xyz_copy[b,:,p,1:uniq_num]
+        offs = torch.norm(point_sel-center,dim=0)
+        dist = torch.norm(point_clst-torch.cat(point_clst.size(1)*[point_sel],dim=1),dim=0)
+        if dist.size(0)>1:
+            dist = torch.min(dist) 
+        edge_weight[b,p,0] = offs-LAMBDA*dist
+        edge_weight[b,p,uniq_num:sample_num+1] = offs-LAMBDA*dist
+        for pt in range(1,uniq_num):
+            point_clst = (torch.cat([grouped_xyz_copy[b,:,p,:pt],grouped_xyz_copy[b,:,p,pt+1:]],dim=1))
+            point_sel = grouped_xyz_copy[b,:,p,pt].view(3,1).contiguous()
+            offs = torch.norm(point_sel-center,dim=0)
+            dist = torch.norm(point_clst-torch.cat(point_clst.size(1)*[point_sel],dim=1),dim=0)
+            if dist.size(0)>1:
+                dist = torch.min(dist) 
+            edge_weight[b,p,pt] = offs-LAMBDA*dist
+        #normalization
+        edge_weight[b,p,:]-= torch.min(edge_weight[b,p,:])
+        edge_weight[b,p,:]/= (torch.max(edge_weight[b,p,:])-torch.min(edge_weight[b,p,:]))
+        edge_weight[b,p,:]+=0.1
+# output size (B,npoint,sample_num)
+edge_weights = torch.cat(new_features.size(1)*[edge_weight.unsqueeze(1)],dim=1).contiguous()
+edge_weights.requires_grad = True
+# (B,C,npoints,nsample)
+new_features = new_features.mul(edge_weights.cuda()).contiguous() 

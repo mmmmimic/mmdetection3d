@@ -41,18 +41,21 @@ def flip_axis_to_camera(pc):
         pc (np.ndarray): points in depth axis.
 
     Returns:
-        np.ndarray: points in camera  axis.
+        np.ndarray: points in camera axis.
     """
-    pc2 = np.copy(pc)
-    pc2[:, [0, 1, 2]] = pc2[:, [0, 2, 1]]  # cam X,Y,Z = depth X,-Z,Y
-    pc2[:, 1] *= -1
+    # camera axis的Z轴是和光轴重合的
+    # Depth x,y,z -> Camera x,z,-y
+    pc2 = np.copy(pc) # 深复制
+    pc2[:, [0, 1, 2]] = pc2[:, [0, 2, 1]]  # Depth下的 x,y,z -> x,z,y
+    pc2[:, 1] *= -1 # x,z,y -> x,-z,y，这也是depth coor在depth下的表示
     return pc2
 
 
 def flip_axis_to_depth(pc):
+    # 逆变换，camera->depth
     pc2 = np.copy(pc)
-    pc2[:, [0, 1, 2]] = pc2[:, [0, 2, 1]]  # depth X,Y,Z = cam X,Z,-Y
-    pc2[:, 2] *= -1
+    pc2[:, [0, 1, 2]] = pc2[:, [0, 2, 1]]  # Camera下的 x,y,z -> x,z,y
+    pc2[:, 2] *= -1 # x,z,y -> x,z,-y，这也是camera coor在depth下的表示
     return pc2
 
 
@@ -84,17 +87,20 @@ class SUNRGBD_Calibration(object):
 
     We define five coordinate system in SUN RGBD dataset:
 
-        camera coodinate:
+        camera coodinate: #前面用到的两个坐标系之一
             Z is forward, Y is downward, X is rightward.
 
-        depth coordinate:
+        depth coordinate: #前面用到的两个坐标系之一
             Just change axis order and flip up-down axis from camera coord.
 
         upright depth coordinate: tilted depth coordinate by Rtilt such that
+        # Rtilt是数据集自带的一个变换矩阵，对depth坐标系进行处理，使其竖直
+        # P_depthupright = Rtilt*P_depth
             Z is gravity direction, Z is up-axis, Y is forward,
             X is right-ward.
 
         upright camera coordinate:
+        # 由upright depth坐标系变换而来
             Just change axis order and flip up-down axis from upright.
                 depth coordinate
 
@@ -104,6 +110,7 @@ class SUNRGBD_Calibration(object):
            v
             y-axis (v)
 
+        # 数据都是存在upright depth坐标系中的
         depth points are stored in upright depth coordinate.
         labels for 3d box (basis, centroid, size) are in upright
             depth coordinate.
@@ -119,9 +126,9 @@ class SUNRGBD_Calibration(object):
     def __init__(self, calib_filepath):
         lines = [line.rstrip() for line in open(calib_filepath)]
         Rtilt = np.array([float(x) for x in lines[0].split(' ')])
-        self.Rtilt = np.reshape(Rtilt, (3, 3), order='F')
+        self.Rtilt = np.reshape(Rtilt, (3, 3), order='F') # Rtilt是一个3x3的旋转矩阵
         K = np.array([float(x) for x in lines[1].split(' ')])
-        self.K = np.reshape(K, (3, 3), order='F')
+        self.K = np.reshape(K, (3, 3), order='F') # K应当是相机的内参矩阵，包括x,y方向的offset和focal length
         self.f_u = self.K[0, 0]
         self.f_v = self.K[1, 1]
         self.c_u = self.K[0, 2]
@@ -131,15 +138,20 @@ class SUNRGBD_Calibration(object):
         """Convert pc coordinate from depth to image.
 
         Args:
-            pc (np.ndarray): Point cloud in depth coordinate.
+            pc (np.ndarray): Point cloud in upright depth coordinate.
 
         Returns:
             pc (np.ndarray): Point cloud in camera coordinate.
         """
         # Project upright depth to depth coordinate
+        # 由于P_depthupright = Rtilt*P_depth
+        # 现在要求P_depth
+        # 数据集中的数据是在upright depth中的
+        # P_depth = (Rtilt)^(-1)*P_depthupright
+
         pc2 = np.dot(np.transpose(self.Rtilt), np.transpose(pc[:,
                                                                0:3]))  # (3,n)
-        return flip_axis_to_camera(np.transpose(pc2))
+        return flip_axis_to_camera(np.transpose(pc2)) # (n,3)->(n,3)
 
     def project_upright_depth_to_image(self, pc):
         """Convert pc coordinate from depth to image.
@@ -151,22 +163,21 @@ class SUNRGBD_Calibration(object):
             np.ndarray: [N, 2] uv.
             np.ndarray: [n,] depth.
         """
-        pc2 = self.project_upright_depth_to_camera(pc)
-        uv = np.dot(pc2, np.transpose(self.K))  # (n,3)
-        uv[:, 0] /= uv[:, 2]
+        pc2 = self.project_upright_depth_to_camera(pc) # 先从upright depth投到camera, (n,3)
+        uv = np.dot(pc2, np.transpose(self.K))  # (n,3)，(3,n)=K*(3,n)，所以(n,3)=(n,3)*K^T
+        uv[:, 0] /= uv[:, 2] # 转换成齐次形式
         uv[:, 1] /= uv[:, 2]
         return uv[:, 0:2], pc2[:, 2]
 
     def project_image_to_camera(self, uv_depth):
-        n = uv_depth.shape[0]
-        x = ((uv_depth[:, 0] - self.c_u) * uv_depth[:, 2]) / self.f_u
+        n = uv_depth.shape[0] # 得到n，点的个数，uv_depth的大小是(n,2)
+        x = ((uv_depth[:, 0] - self.c_u) * uv_depth[:, 2]) / self.f_u # 减去offset，投影 
         y = ((uv_depth[:, 1] - self.c_v) * uv_depth[:, 2]) / self.f_v
         pts_3d_camera = np.zeros((n, 3))
         pts_3d_camera[:, 0] = x
         pts_3d_camera[:, 1] = y
         pts_3d_camera[:, 2] = uv_depth[:, 2]
         return pts_3d_camera
-
 
 def rotz(t):
     """Rotation about the z-axis.
@@ -194,35 +205,30 @@ def transform_from_rot_trans(R, t):
     """
     R = R.reshape(3, 3)
     t = t.reshape(3, 1)
-    return np.vstack((np.hstack([R, t]), [0, 0, 0, 1]))
-
+    return np.vstack((np.hstack([R, t]), [0, 0, 0, 1])) # 构建transformation matrix
 
 def read_sunrgbd_label(label_filename):
     lines = [line.rstrip() for line in open(label_filename)]
     objects = [SUNObject3d(line) for line in lines]
     return objects
 
-
 def load_image(img_filename):
     return cv2.imread(img_filename)
-
 
 def load_depth_points(depth_filename):
     depth = np.loadtxt(depth_filename)
     return depth
 
-
 def load_depth_points_mat(depth_filename):
     depth = sio.loadmat(depth_filename)['instance']
     return depth
 
-
 def in_hull(p, hull):
+    # 确定点是否在hull中
     from scipy.spatial import Delaunay
     if not isinstance(hull, Delaunay):
         hull = Delaunay(hull)
     return hull.find_simplex(p) >= 0
-
 
 def extract_pc_in_box3d(pc, box3d):
     """Extract point cloud in box3d.
@@ -236,11 +242,11 @@ def extract_pc_in_box3d(pc, box3d):
         np.ndarray: Indices of selected point cloud.
     """
     box3d_roi_inds = in_hull(pc[:, 0:3], box3d)
-    return pc[box3d_roi_inds, :], box3d_roi_inds
+    return pc[box3d_roi_inds, :], box3d_roi_inds #返回在box中的点的坐标和index
 
 
 def my_compute_box_3d(center, size, heading_angle):
-    R = rotz(-1 * heading_angle)
+    R = rotz(-1 * heading_angle) #注意角是负的，因为这里的坐标系是根据左手定则构建的，正角是逆时针的
     l, w, h = size
     x_corners = [-l, l, l, -l, -l, l, l, -l]
     y_corners = [w, w, -w, -w, w, w, -w, -w]
@@ -249,7 +255,7 @@ def my_compute_box_3d(center, size, heading_angle):
     corners_3d[0, :] += center[0]
     corners_3d[1, :] += center[1]
     corners_3d[2, :] += center[2]
-    return np.transpose(corners_3d)
+    return np.transpose(corners_3d) #(8,3)，一共8个顶点
 
 
 def compute_box_3d(obj, calib):

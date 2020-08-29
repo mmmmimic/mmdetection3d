@@ -30,14 +30,15 @@ class PointSAModuleMSG(nn.Module):
     """
 
     def __init__(self,
-                 num_point: int,#点的数量
+                 num_point: int,#FPS采样点的数量
                  radii: List[float],#ball query的半径
                  sample_nums: List[int],#每个ball query采样的点的数量，由于是multi-scale grouping，所以采样的数目不一样
                  mlp_channels: List[List[int]],# mlp的channel
                  norm_cfg: dict = dict(type='BN2d'),
                  use_xyz: bool = True,
                  pool_mod='max',# 池化方式
-                 normalize_xyz: bool = False):
+                 normalize_xyz: bool = False,
+                 edge_arg: bool = False):#update 2020/8/28
         super().__init__()
 
         assert len(radii) == len(sample_nums) == len(mlp_channels)
@@ -48,8 +49,7 @@ class PointSAModuleMSG(nn.Module):
         self.groupers = nn.ModuleList()
         self.mlps = nn.ModuleList()
 
-        for i in range(len(radii)): #一共ball query多少次，也即SA的个数，
-            #因为在pointNet++中，是有多个SA module的Hierarchical feature learning
+        for i in range(len(radii)): #一共ball query多少次
             # 回顾：每个SA都包含sampling(FPS), grouping(ball query)和pointNet(由于ball query得到的每个
             # 下采样点的特征维度是不同的，需要用pointNet来将其变为固定长度)三个部分，需要给定的参数有：
             # sampling阶段的sample_num，ball query阶段的radius(radii)
@@ -60,8 +60,9 @@ class PointSAModuleMSG(nn.Module):
                     radius,
                     sample_num,
                     use_xyz=use_xyz,
-                    normalize_xyz=normalize_xyz)
-            else:
+                    normalize_xyz=normalize_xyz,
+                    edge_arg=edge_arg)
+            else:#当num_point时None的时候，即没有下采样点，没进行FPS
                 grouper = GroupAll(use_xyz)
             self.groupers.append(grouper) # 储存group用的函数的ModuleList()
             # ball query的输出尺寸应该为BxMxKxC，
@@ -228,7 +229,8 @@ class PointSAModule(PointSAModuleMSG):
                  norm_cfg: dict = dict(type='BN2d'),
                  use_xyz: bool = True,
                  pool_mod: str = 'max',
-                 normalize_xyz: bool = False):
+                 normalize_xyz: bool = False,
+                 edge_arg: bool = False):
         super().__init__(
             mlp_channels=[mlp_channels],
             num_point=num_point,
@@ -237,4 +239,5 @@ class PointSAModule(PointSAModuleMSG):
             norm_cfg=norm_cfg,
             use_xyz=use_xyz,
             pool_mod=pool_mod,
-            normalize_xyz=normalize_xyz)
+            normalize_xyz=normalize_xyz,
+            edge_arg=False)

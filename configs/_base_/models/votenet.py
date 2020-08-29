@@ -1,5 +1,5 @@
 model = dict(
-    type='VoteNet',
+    type='VoteNet',#由于是single-stage的，只需要一个backbone和一个head
     backbone=dict(
         type='PointNet2SASSG',
         in_channels=4,

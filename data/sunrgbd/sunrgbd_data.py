@@ -32,10 +32,11 @@ DEFAULT_TYPE_WHITELIST = [
 def random_sampling(pc, num_sample, replace=None, return_choices=False):
     """Input is NxC, output is num_samplexC."""
     if replace is None:
-        replace = (pc.shape[0] < num_sample)
-    choices = np.random.choice(pc.shape[0], num_sample, replace=replace)
+        replace = (pc.shape[0] < num_sample) # 要采样的点比原始数据还多，就不是downsampling了
+    choices = np.random.choice(pc.shape[0], num_sample, replace=replace) # replace为true，可以重复采样，使用pc.shape[0]
+    # 即N，相当于np.arrange(N)
     if return_choices:
-        return pc[choices], choices
+        return pc[choices], choices # 是否返回index
     else:
         return pc[choices]
 
@@ -56,22 +57,22 @@ class sunrgbd_object(object):
     def __init__(self, root_dir, split='training', use_v1=False):
         self.root_dir = root_dir
         self.split = split
-        assert (self.split == 'training')
+        assert (self.split == 'training') # 使用test的时候不会出错吗
         self.split_dir = os.path.join(root_dir)
 
         if split == 'training':
-            self.num_samples = 10335
+            self.num_samples = 10335 # 训练集有10335个样本
         elif split == 'testing':
-            self.num_samples = 2860
+            self.num_samples = 2860 # 测试集有2860个样本
         else:
             print('Unknown split: %s' % (split))
-            exit(-1)
+            exit(-1) # 结束程序
 
         self.image_dir = os.path.join(self.split_dir, 'image')
         self.calib_dir = os.path.join(self.split_dir, 'calib')
         self.depth_dir = os.path.join(self.split_dir, 'depth')
         if use_v1:
-            self.label_dir = os.path.join(self.split_dir, 'label_v1')
+            self.label_dir = os.path.join(self.split_dir, 'label_v1') #如果不用v1，默认是v2
         else:
             self.label_dir = os.path.join(self.split_dir, 'label')
 
@@ -98,7 +99,7 @@ class sunrgbd_object(object):
 def extract_sunrgbd_data(idx_filename,
                          split,
                          output_folder,
-                         num_point=20000,
+                         num_point=20000, #默认下采样20000个点
                          type_whitelist=DEFAULT_TYPE_WHITELIST,
                          save_votes=False,
                          use_v1=False,
@@ -124,7 +125,11 @@ def extract_sunrgbd_data(idx_filename,
         <id>_votes.npz of (N,10) with 0/1 indicating whether the point
             belongs to an object, then three sets of GT votes for up to
             three objects. If the point is only in one object's OBB, then
-            the three GT votes are the same.
+            the three GT votes are the same. 
+            注释：
+            10个中的0是binary的，表示是否是前景点。
+            剩下的9个分别是到3个objects的votes，即到centroid的向量。
+            OBB: Object Bounding Box
     """
     dataset = sunrgbd_object('./sunrgbd_trainval', split, use_v1=use_v1)
     data_idx_list = [int(line.rstrip()) for line in open(idx_filename)]
@@ -139,7 +144,7 @@ def extract_sunrgbd_data(idx_filename,
         if skip_empty_scene and \
                 (len(objects) == 0 or
                  len([obj for obj in objects if
-                      obj.classname in type_whitelist]) == 0):
+                      obj.classname in type_whitelist]) == 0): # 标签中没有类的时候
             continue
 
         object_list = []
@@ -172,7 +177,7 @@ def extract_sunrgbd_data(idx_filename,
             point_votes = np.zeros((N, 10))  # 3 votes and 1 vote mask
             point_vote_idx = np.zeros(
                 (N)).astype(np.int32)  # in the range of [0,2]
-            indices = np.arange(N)
+            indices = np.arange(N) # 1xN的矩阵，[0,1,2,3,4,5,...,N-1]
             for obj in objects:
                 if obj.classname not in type_whitelist:
                     continue
@@ -181,20 +186,21 @@ def extract_sunrgbd_data(idx_filename,
                     box3d_pts_3d = sunrgbd_utils.my_compute_box_3d(
                         obj.centroid,
                         np.array([obj.length, obj.width, obj.height]),
-                        obj.heading_angle)
+                        obj.heading_angle) #返回bbox在upright depth坐标系中的坐标
                     pc_in_box3d, inds = sunrgbd_utils.extract_pc_in_box3d(
-                        pc_upright_depth_subsampled, box3d_pts_3d)
-                    point_votes[inds, 0] = 1
+                        pc_upright_depth_subsampled, box3d_pts_3d) # 返回在bbox中的点的坐标和index
+                    point_votes[inds, 0] = 1 # 0是表示是前景还是背景，设置在bboox中的点为1
                     votes = np.expand_dims(obj.centroid, 0) - pc_in_box3d[:,
-                                                                          0:3]
-                    sparse_inds = indices[inds]
+                                                                          0:3] # votes是point cloud指向centroid的向量
+                    sparse_inds = indices[inds]#将index[0,1,0,0,1...]转换为索引
                     for i in range(len(sparse_inds)):
-                        j = sparse_inds[i]
+                        j = sparse_inds[i] #点j
                         point_votes[j,
                                     int(point_vote_idx[j] * 3 +
                                         1):int((point_vote_idx[j] + 1) * 3 +
                                                1)] = votes[i, :]
-                        # Populate votes with the fisrt vote
+                        # Populate votes with the first vote
+                        # 最多储存3个object的vote
                         if point_vote_idx[j] == 0:
                             point_votes[j, 4:7] = votes[i, :]
                             point_votes[j, 7:10] = votes[i, :]
